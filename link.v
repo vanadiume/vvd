@@ -1,0 +1,150 @@
+module main
+
+import cli
+import time
+import vanadiume.vlk
+import vanadiume.vlk.output
+import vanadiume.vlk.target
+
+// Report is what a run came to, in the terms a build system asks for: the file,
+// how long it is, how many inputs the merge took, and the libraries the image
+// names.
+struct Report {
+	path      string
+	bytes     int
+	units     int
+	pulled    int
+	libraries []string
+	// micros is the wall time of the link, from the first read to the last byte
+	// written. It is the frontend's own measurement and not a claim about the
+	// library: the process around it is not in the number.
+	micros i64
+}
+
+// link is one link as the command line asked for it. The library answers with
+// the image written to the file the options name; what this function decides is
+// the shape of the request, which is what a frontend is for.
+fn link(options cli.Options) !Report {
+	machine := target.host() or {
+		return error('vvd links for the machine it runs on, and vlk describes no target for this one')
+	}
+	// -m names the machine the image is for, and this frontend knows the one
+	// spelling for the machine it runs on. The other spellings are refused rather
+	// than recorded, so a cross link fails here instead of writing an image for
+	// the wrong machine.
+	if options.emulation != '' && options.emulation != emulation_name(machine) {
+		return error('-m ${options.emulation} names another machine: this frontend links for ${emulation_name(machine)}')
+	}
+	target_for_link := if options.dynamic_linker != '' {
+		loader_target(machine, options.dynamic_linker)
+	} else {
+		machine
+	}
+	kind := if options.shared {
+		output.Kind.shared
+	} else if options.static_link {
+		output.Kind.static_program
+	} else {
+		output.Kind.program
+	}
+	container := output.Options{
+		execstack:   options.execstack
+		noexecstack: options.noexecstack
+		bind_now:    options.bind_now
+		relro:       options.relro
+		soname:      options.soname
+	}
+	started := time.now()
+	report := vlk.link_files(options.inputs, vlk.Options{
+		entry:                entry_for(options)
+		target:               target_for_link
+		libraries:            options.libraries
+		library_dirs:         options.library_dirs
+		no_default_libraries: options.no_default_libraries
+		output:               options.output
+		kind:                 kind
+		container:            container
+	})!
+	return Report{
+		path:      report.path
+		bytes:     report.bytes
+		units:     report.units
+		pulled:    report.pulled
+		libraries: report.libraries
+		micros:    (time.now() - started).microseconds()
+	}
+}
+
+// entry_for is the name the image starts at. A shared object is mapped rather
+// than started, so the default name is dropped for one; a name the command line
+// wrote is kept, because asking for it is a decision.
+fn entry_for(options cli.Options) string {
+	if options.shared && !options.entry_given {
+		return ''
+	}
+	return options.entry
+}
+
+// emulation_name is the -m spelling for a target. The emulation names are GNU
+// ld's, and the frontend knows the x86-64 one because that is the machine vlk
+// describes today; a second machine adds its own row here.
+fn emulation_name(machine target.Target) string {
+	if machine.elf_machine == 62 {
+		return 'elf_x86_64'
+	}
+	return machine.name
+}
+
+// loader_target is the host target with another loader named in it. The fields
+// are copied because a Target's are values a caller fills and does not rewrite:
+// this is a second value, not an edit of the library's answer. A field the
+// library adds later arrives here as its zero value, and the gate's end-to-end
+// link is the test that would fail if it mattered.
+fn loader_target(machine target.Target, loader string) target.Target {
+	return target.Target{
+		name:                       machine.name
+		word_size:                  machine.word_size
+		elf_machine:                machine.elf_machine
+		page_size:                  machine.page_size
+		load_base:                  machine.load_base
+		interpreter:                loader
+		base_library:               machine.base_library
+		library_dirs:               machine.library_dirs
+		registers:                  machine.registers
+		float_registers:            machine.float_registers
+		relocation_call:            machine.relocation_call
+		relocation_pc_relative:     machine.relocation_pc_relative
+		relocation_got_pc_relative: machine.relocation_got_pc_relative
+		encoders:                   machine.encoders
+	}
+}
+
+// verbose_lines is what --verbose prints before the link: the request, in the
+// order the command line wrote it. It is on stderr so that it cannot be mistaken
+// for what the run wrote.
+fn verbose_lines(options cli.Options) []string {
+	mut lines := ['flavor: ${options.flavor}', 'output: ${options.output}',
+		'entry: ${entry_for(options)}']
+	for item in options.link_items {
+		if item.library {
+			lines << 'library: ${item.value}'
+		} else {
+			lines << 'input: ${item.value}'
+		}
+	}
+	for dir in options.library_dirs {
+		lines << 'library path: ${dir}'
+	}
+	return lines
+}
+
+// report_lines is what --stats prints: one fact per line, so a build can read one
+// without parsing a sentence.
+fn report_lines(report Report) []string {
+	mut lines := ['output: ${report.path}', 'bytes: ${report.bytes}', 'units: ${report.units}',
+		'pulled: ${report.pulled}', 'microseconds: ${report.micros}']
+	for library in report.libraries {
+		lines << 'library: ${library}'
+	}
+	return lines
+}
