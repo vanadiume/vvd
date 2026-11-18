@@ -1,0 +1,22 @@
+# The frontend's own binary, and the images a probe run writes beside it.
+/vvd
+*.o
+*.a
+a.out
+
+# Agent working state. Plans, probes and notes for one run live here and are
+# never committed.
+.omh/
+
+# Coding tools drop a directory into a working tree. None of it is project
+# content, and a tool that is not listed gets a line rather than a commit.
+.claude/
+.codex/
+.opencode/
+.omo/
+.cursor/
+.gemini/
+.continue/
+.aider*
+.kilo/
+.zed/
