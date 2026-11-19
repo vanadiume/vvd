@@ -46,6 +46,17 @@ pub:
 	library bool
 }
 
+// Group is one run of inputs the command line wrapped in --start-group and
+// --end-group. The library sweeps every archive in a group again while a sweep
+// pulls a member, so two libraries that answer each other's names are both read.
+// Outside the markers an archive is swept once, in the order it was written.
+pub struct Group {
+pub:
+	// items are the paths and -l names inside the markers, in the order the
+	// command line wrote them.
+	items []Item
+}
+
 // Options is the command line after it has been read, in the terms a link uses.
 // A flag this frontend implements fills a field here; a flag it does not is
 // refused where it is read, so nothing in this struct is a hope that something
@@ -63,6 +74,11 @@ pub mut:
 	library_dirs []string
 	// link_items is the same command line as one list, in order, for a report.
 	link_items []Item
+	// groups are the runs of inputs wrapped in --start-group and --end-group, in
+	// the order the markers appeared. Their items are not in inputs or
+	// libraries: the group is where they sit, and reading them twice would put
+	// every member in the image twice.
+	groups []Group
 	// output is the file the image is written to, `a.out` unless -o says
 	// otherwise.
 	output string
@@ -165,6 +181,12 @@ pub fn parse(args []string) !Options {
 	}
 	mut positional := []string{}
 	mut items := []Item{}
+	// A --start-group ... --end-group run is followed as it is read: its items
+	// are kept together and its -l names stay out of the top-level library list,
+	// because the group is where they sit on the command line.
+	mut groups := []Group{}
+	mut group_items := []Item{}
+	mut in_group := false
 	mut end_of_flags := false
 	mut cursor := Cursor{
 		args: expanded
@@ -172,7 +194,13 @@ pub fn parse(args []string) !Options {
 	for !cursor.at_end() {
 		arg := cursor.next()
 		if end_of_flags || arg == '-' || !arg.starts_with('-') {
-			positional << arg
+			if in_group {
+				group_items << Item{
+					value: arg
+				}
+			} else {
+				positional << arg
+			}
 			items << Item{
 				value: arg
 			}
@@ -196,6 +224,21 @@ pub fn parse(args []string) !Options {
 			opts.stats = true
 		} else if arg == '--verbose' {
 			opts.verbose = true
+		} else if arg == '--start-group' || arg == '-(' {
+			if in_group {
+				return error('--start-group inside a group: the two markers do not nest')
+			}
+			in_group = true
+			group_items = []
+		} else if arg == '--end-group' || arg == '-)' {
+			if !in_group {
+				return error('--end-group without --start-group')
+			}
+			groups << Group{
+				items: group_items
+			}
+			group_items = []
+			in_group = false
 		} else if arg == '-shared' || arg == '--shared' || arg == '-Bshareable' {
 			opts.shared = true
 		} else if arg == '-static' || arg == '--static' {
@@ -244,31 +287,59 @@ pub fn parse(args []string) !Options {
 			opts.entry_given = true
 		} else if arg == '-l' {
 			name := cursor.value_of('-l', '')!
-			opts.libraries << name
 			items << Item{
 				value:   name
 				library: true
+			}
+			if in_group {
+				group_items << Item{
+					value:   name
+					library: true
+				}
+			} else {
+				opts.libraries << name
 			}
 		} else if arg.starts_with('-l') {
 			name := cursor.value_of('-l', arg[2..])!
-			opts.libraries << name
 			items << Item{
 				value:   name
 				library: true
+			}
+			if in_group {
+				group_items << Item{
+					value:   name
+					library: true
+				}
+			} else {
+				opts.libraries << name
 			}
 		} else if arg == '--library' {
 			name := cursor.value_of('--library', '')!
-			opts.libraries << name
 			items << Item{
 				value:   name
 				library: true
 			}
+			if in_group {
+				group_items << Item{
+					value:   name
+					library: true
+				}
+			} else {
+				opts.libraries << name
+			}
 		} else if arg.starts_with('--library=') {
 			name := cursor.value_of('--library', arg['--library='.len..])!
-			opts.libraries << name
 			items << Item{
 				value:   name
 				library: true
+			}
+			if in_group {
+				group_items << Item{
+					value:   name
+					library: true
+				}
+			} else {
+				opts.libraries << name
 			}
 		} else if arg == '-L' {
 			opts.library_dirs << cursor.value_of('-L', '')!
@@ -312,6 +383,10 @@ pub fn parse(args []string) !Options {
 	}
 	opts.inputs = positional
 	opts.link_items = items
+	if in_group {
+		return error('--start-group without --end-group: the markers close the run of inputs they wrap')
+	}
+	opts.groups = groups
 	// The pairs are judged once the whole line has been read, so a line that
 	// carries both of a pair is told about the pair rather than about whichever
 	// flag came first.
@@ -327,7 +402,8 @@ pub fn parse(args []string) !Options {
 	if opts.dynamic_linker != '' && opts.shared {
 		return error('--dynamic-linker names the loader of a program, and a shared object is mapped rather than started')
 	}
-	if !opts.show_help && !opts.show_version && opts.inputs.len == 0 && opts.libraries.len == 0 {
+	if !opts.show_help && !opts.show_version && opts.inputs.len == 0 && opts.libraries.len == 0
+		&& opts.groups.len == 0 {
 		return error('no input files')
 	}
 	return opts
@@ -411,12 +487,8 @@ const refusals = [
 		reason:    "nothing in the image is dropped or folded yet, which is the library's 0.2.0 work"
 	},
 	Refusal{
-		spellings: ['--whole-archive', '--no-whole-archive', '-(', '-)']
+		spellings: ['--whole-archive', '--no-whole-archive']
 		reason:    'an archive gives up the members that answer a name nothing defines, and reading every member is not implemented'
-	},
-	Refusal{
-		spellings: ['--start-group', '--end-group']
-		reason:    'the -l search makes one pass after every input, so a group between libraries would not be honored'
 	},
 	Refusal{
 		spellings: ['--as-needed', '--no-as-needed']
@@ -563,6 +635,8 @@ pub fn usage() string {
 	lines << "                                     target's own"
 	lines << '  -m <emulation>                     The machine: elf_x86_64 only'
 	lines << '  -flavor <flavor>                   The driver: gnu only'
+	lines << '  --start-group, --end-group         Search the archives between the markers'
+	lines << '                                     again while a search pulls a member'
 	lines << '  -s, -S, --strip-all, --strip-debug Accepted: the image carries no static symbol'
 	lines << '                                     table and no debug information'
 	lines << '  --stats                            Print what the link took, after it is written'
@@ -575,7 +649,7 @@ pub fn usage() string {
 	lines << ''
 	lines << 'Flags a GNU ld command line carries that this frontend does not implement are'
 	lines << 'refused by name rather than dropped: -r, -pie, -T, -M, --gc-sections,'
-	lines << '--whole-archive, --start-group, --as-needed, --build-id, --hash-style,'
+	lines << '--whole-archive, --as-needed, --build-id, --hash-style,'
 	lines << '--threads, --sysroot, -N, -Xlinker and --allow-shlib-undefined.'
 	return lines.join('\n')
 }
