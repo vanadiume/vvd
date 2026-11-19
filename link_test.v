@@ -245,6 +245,24 @@ fn test_shared_writes_a_dynamic_object_and_records_its_soname() {
 	assert !os.is_executable(out)
 }
 
+// A pie is ET_DYN like a shared object and is still started by the kernel. Its
+// addresses are offsets, so a unit whose code reaches nothing by an absolute
+// address needs no relocation and runs wherever the loader puts it.
+fn test_pie_writes_an_image_the_kernel_places_and_runs() {
+	out := scratch('pie_answer')
+	defer {
+		os.rmdir_all(os.dir(out)) or {}
+	}
+	source := write_object(exiting(37), 'pie_answer.o')
+	report := link(cli.parse(['-pie', '-e', 'main', '-o', out, source])!)!
+	bytes := os.read_bytes(out)!
+	assert report.bytes == bytes.len
+	// e_type at offset 16: ET_DYN, the shared container with an entry point.
+	assert bytes[16] == 3 && bytes[17] == 0
+	assert os.is_executable(out)
+	assert run_image(out) == 37
+}
+
 fn test_a_named_loader_is_the_one_the_image_records() {
 	out := scratch('named_loader')
 	defer {

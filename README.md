@@ -53,6 +53,7 @@ library: libc.so.6
 | `-l <name>`, `--library=<name>`, `-l<name>` | a library the search resolves |
 | `-L <dir>`, `--library-path=<dir>`, `-L<dir>` | a directory the `-l` search reads before the target's own |
 | `-shared`, `--shared`, `-Bshareable` | a shared object rather than a program |
+| `-pie`, `--pic-executable` | a position-independent executable: the kernel starts it and the loader chooses where it is mapped |
 | `-static`, `--static` | every library resolved into the file, with no loader in the image |
 | `-nostdlib`, `-nodefaultlibs` | no C library is named in the image, so nothing outside the link answers an import |
 | `--soname=<name>`, `-soname <name>`, `-h <name>` | the name a shared object records as its own |
@@ -70,7 +71,7 @@ library: libc.so.6
 | `--help`, `-help` | the flag surface, and stop |
 | `-s`, `-S`, `--strip-all`, `--strip-debug` | accepted: the image carries no static symbol table and no debug information |
 | `--eh-frame-hdr` | accepted: the image writes the table from the units' function ranges |
-| `-no-pie`, `-nostartfiles` | accepted: the image is placed at a fixed base and no start file is added |
+| `-no-pie`, `-nostartfiles` | `-no-pie` asks for the fixed-base program again; `-nostartfiles` adds no start file |
 
 `-h` is the shared object's name, the way GNU ld spells it. The help is
 `--help` and `-help`, so a build that writes `-h` for help gets the refusal that
@@ -93,7 +94,7 @@ nothing by a flag believes something happened that did not.
 | Flag | Why |
 |---|---|
 | `-r`, `-i`, `--relocatable`, `--emit-relocs` | the image is a program or a shared object; no relocatable file is written |
-| `-pie`, `--pic-executable`, `--pic` | the image is placed at a fixed load base; nothing here writes a position-independent program |
+| `-static-pie`, `--static-pie` | a static pie names no loader, and vlk writes a pie that the loader maps |
 | `-T`, `--script`, `--default-script`, `--version-script=`, `--dynamic-list=` | vlk places the sections itself and reads no linker script |
 | `-M`, `--print-map`, `-Map` | `--stats` reports what the link took; no map file is written |
 | `--gc-sections`, `--icf`, `--print-gc-sections` | nothing is dropped or folded yet |
