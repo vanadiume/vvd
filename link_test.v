@@ -74,6 +74,118 @@ fn run_image(path string) int {
 	return os.exec([path]).exit_code
 }
 
+// The archive writer below builds an `ar` file in the test: a GNU symbol index
+// first, then the member header, with the index's offsets pointing at it. The
+// tree commits no binary fixture, so the container a group is checked with is
+// written where the test runs.
+fn ar_field(text string, width int) []u8 {
+	mut field := text.bytes()
+	for field.len < width {
+		field << u8(` `)
+	}
+	return field
+}
+
+fn ar_header(name string, size int) []u8 {
+	mut header := ar_field(name, 16)
+	header << ar_field('0', 12)
+	header << ar_field('0', 6)
+	header << ar_field('0', 6)
+	header << ar_field('0', 8)
+	header << ar_field('${size}', 10)
+	header << u8(0x60)
+	header << u8(0x0a)
+	return header
+}
+
+fn be32(value u32) []u8 {
+	return [u8(value >> 24), u8((value >> 16) & 0xff), u8((value >> 8) & 0xff), u8(value & 0xff)]
+}
+
+fn archive_of(name string, member []u8, symbols []string) []u8 {
+	mut index_size := 4 + 4 * symbols.len
+	for symbol in symbols {
+		index_size += symbol.len + 1
+	}
+	header_at := 8 + 60 + index_size + (index_size & 1)
+	mut index := []u8{}
+	index << be32(u32(symbols.len))
+	for _ in symbols {
+		index << be32(u32(header_at))
+	}
+	for symbol in symbols {
+		index << symbol.bytes()
+		index << u8(0)
+	}
+	mut out := '!<arch>\n'.bytes()
+	out << ar_header('/', index.len)
+	out << index
+	if index.len & 1 == 1 {
+		out << u8(0x0a)
+	}
+	out << ar_header('${name}/', member.len)
+	out << member
+	if member.len & 1 == 1 {
+		out << u8(0x0a)
+	}
+	return out
+}
+
+// exiting_as is a unit that defines one name and stops with a status.
+fn exiting_as(name string, code u8) unit.Program {
+	mut part := unit.Program{}
+	part.text = [u8(0xbf), code, u8(0), u8(0), u8(0), u8(0xb8), u8(60), u8(0), u8(0), u8(0), u8(0x0f),
+		u8(0x05)]
+	part.defined[name] = true
+	part.labels[name] = 0
+	return part
+}
+
+// calling_a_from_b defines `b`, calls `a`, and then stops with 9 if the call
+// returned. The call is a fixup, so `a` is a name the link has to answer.
+fn calling_a_from_b() unit.Program {
+	mut part := exiting_as('b', 9)
+	part.text = [u8(0xbf), u8(9), u8(0), u8(0), u8(0), u8(0xe8), u8(0), u8(0), u8(0), u8(0), u8(0xb8),
+		u8(60), u8(0), u8(0), u8(0), u8(0x0f), u8(0x05)]
+	part.imports << 'a'
+	part.fixups << unit.Fixup{
+		start:  6
+		length: 4
+		kind:   .call_import
+		name:   'a'
+	}
+	return part
+}
+
+// A group is swept by the library, not by the frontend: the program needs `b`,
+// the archive holding `a` is written before the one holding `b`, and `b` needs
+// `a`. Read once each in order the earlier archive is passed first; inside the
+// markers the library comes back for it. The image exits with 7, which is the
+// status `a` stops with.
+fn test_a_group_reaches_the_library() {
+	main_path := write_object(calling('b'), 'group_main.o')
+	a_path := scratch('liba.a')
+	os.write_file_array(a_path, archive_of('a.o', elf.object(exiting_as('a', 7), host()) or {
+		panic(err)
+	}, ['a'])) or { panic(err) }
+	b_path := scratch('libb.a')
+	os.write_file_array(b_path, archive_of('b.o', elf.object(calling_a_from_b(), host()) or {
+		panic(err)
+	}, ['b'])) or { panic(err) }
+	ungrouped_out := scratch('group_ungrouped')
+	if _ := link(cli.parse([main_path, a_path, b_path, '-e', 'main', '-o', ungrouped_out])!) {
+		assert false, 'the link answered a name from an archive it had already passed'
+	} else {
+		assert err.msg().contains('undefined reference')
+		assert err.msg().contains('`a`')
+	}
+	grouped_out := scratch('grouped')
+	report := link(cli.parse([main_path, '--start-group', a_path, b_path, '--end-group', '-e',
+		'main', '-o', grouped_out])!) or { panic('the grouped link failed: ${err.msg()}') }
+	assert report.units == 3
+	assert run_image(grouped_out) == 7
+}
+
 fn test_an_object_the_frontend_links_is_an_image_that_runs() {
 	out := scratch('forty_two')
 	defer {

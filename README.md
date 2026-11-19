@@ -63,6 +63,7 @@ library: libc.so.6
 | `--dynamic-linker=<path>` | the loader path the image names, in place of the target's own |
 | `-m <emulation>`, `--emulation=` | the machine; `elf_x86_64` is the one spelling, and another one is refused where the target is known |
 | `-flavor <flavor>`, `--flavor=` | the driver; `gnu` is the one this frontend has |
+| `--start-group`, `--end-group`, `-(`, `-)` | search the archives between the markers again while a search pulls a member |
 | `--stats` | the report above, after the image is written |
 | `--verbose` | what the run is about to do, on stderr |
 | `-V`, `--version`, `-v` | the frontend's version, and stop |
@@ -96,8 +97,7 @@ nothing by a flag believes something happened that did not.
 | `-T`, `--script`, `--default-script`, `--version-script=`, `--dynamic-list=` | vlk places the sections itself and reads no linker script |
 | `-M`, `--print-map`, `-Map` | `--stats` reports what the link took; no map file is written |
 | `--gc-sections`, `--icf`, `--print-gc-sections` | nothing is dropped or folded yet |
-| `--whole-archive`, `--no-whole-archive`, `-(`, `-)` | an archive gives up the members that answer a name nothing defines; reading every member is not implemented |
-| `--start-group`, `--end-group` | the `-l` search makes one pass after every input |
+| `--whole-archive`, `--no-whole-archive` | an archive gives up the members that answer a name nothing defines; reading every member is not implemented |
 | `--as-needed`, `--no-as-needed` | every library named is recorded as needed |
 | `--build-id` | the image records no build-id note |
 | `--hash-style=` | the image writes a SysV hash table, which is `--hash-style=sysv` |

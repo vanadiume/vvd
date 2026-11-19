@@ -3,6 +3,7 @@ module main
 import cli
 import time
 import vanadiume.vlk
+import vanadiume.vlk.input
 import vanadiume.vlk.output
 import vanadiume.vlk.target
 
@@ -60,6 +61,7 @@ fn link(options cli.Options) !Report {
 		target:               target_for_link
 		libraries:            options.libraries
 		library_dirs:         options.library_dirs
+		groups:               link_groups(options.groups)
 		no_default_libraries: options.no_default_libraries
 		output:               options.output
 		kind:                 kind
@@ -73,6 +75,30 @@ fn link(options cli.Options) !Report {
 		libraries: report.libraries
 		micros:    (time.now() - started).microseconds()
 	}
+}
+
+// link_groups is the command line's groups in the shape the library reads: the
+// paths and the -l names of one run, without the marker that separated them.
+// `cli` keeps the items in the order the line wrote them and knows no linker
+// fact, which is why the split into two lists happens here.
+fn link_groups(groups []cli.Group) []input.Group {
+	mut out := []input.Group{cap: groups.len}
+	for group in groups {
+		mut paths := []string{}
+		mut libraries := []string{}
+		for item in group.items {
+			if item.library {
+				libraries << item.value
+			} else {
+				paths << item.value
+			}
+		}
+		out << input.Group{
+			paths:     paths
+			libraries: libraries
+		}
+	}
+	return out
 }
 
 // entry_for is the name the image starts at. A shared object is mapped rather

@@ -136,6 +136,45 @@ fn test_a_question_needs_no_input_file() {
 	assert parse(['--verbose', 'x.o'])!.verbose
 }
 
+// --start-group and --end-group are read, not refused: the run between them is
+// one Group, and its items stay out of the top-level input and library lists so
+// that nothing is read twice.
+fn test_a_group_is_read_as_one_run() {
+	opts := parse(['a.o', '--start-group', 'x.a', '-lm', 'y.a', '--end-group', 'b.o'])!
+	assert opts.inputs == ['a.o', 'b.o']
+	assert opts.libraries.len == 0
+	assert opts.groups.len == 1
+	assert opts.groups[0].items.len == 3
+	assert opts.groups[0].items[0].value == 'x.a'
+	assert opts.groups[0].items[1].library
+	assert opts.groups[0].items[1].value == 'm'
+	assert opts.groups[0].items[2].value == 'y.a'
+	// The report still holds the whole line in order.
+	assert opts.link_items.len == 5
+	// A line whose only inputs are inside a group is still a link.
+	assert parse(['--start-group', 'x.a', '--end-group'])!.groups.len == 1
+}
+
+// The short GNU spellings are the same markers.
+fn test_the_short_group_markers_are_the_same() {
+	opts := parse(['-(', 'x.a', '-)'])!
+	assert opts.groups.len == 1
+	assert opts.groups[0].items[0].value == 'x.a'
+}
+
+// A group opens and closes once, and an unbalanced or nested pair is refused with
+// the marker the line is missing or repeated.
+fn test_an_unbalanced_group_is_refused() {
+	assert refusal_message(['--start-group', 'x.a']).contains('--end-group')
+	assert refusal_message(['x.a', '--end-group']).contains('--start-group')
+	assert refusal_message(['--start-group', '--start-group', 'x.a', '--end-group', '--end-group']).contains('nest')
+}
+
+fn test_the_group_markers_are_in_the_help() {
+	assert usage().contains('--start-group')
+	assert usage().contains('--end-group')
+}
+
 fn test_a_line_with_no_input_is_refused() {
 	assert refusal_message([]).contains('no input files')
 }
