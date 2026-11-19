@@ -45,6 +45,8 @@ fn link(options cli.Options) !Report {
 		output.Kind.shared
 	} else if options.static_link {
 		output.Kind.static_program
+	} else if options.pie {
+		output.Kind.pie
 	} else {
 		output.Kind.program
 	}

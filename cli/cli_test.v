@@ -73,6 +73,20 @@ fn test_shared_and_static_are_two_different_files() {
 	assert parse(['-shared', 'x.o'])!.static_link == false
 }
 
+// -pie is the third kind of image: the kernel starts it and the loader chooses
+// where it is mapped. It is refused with the two kinds it is not, and -no-pie
+// asks for the program again.
+fn test_pie_is_read_and_refused_beside_the_other_two_kinds() {
+	assert parse(['-pie', 'x.o'])!.pie
+	assert parse(['--pic-executable', 'x.o'])!.pie
+	assert !parse(['x.o'])!.pie
+	assert parse(['-pie', '-no-pie', 'x.o'])!.pie == false
+	with_shared := refusal_message(['-pie', '-shared', 'x.o'])
+	assert with_shared.contains('-pie') && with_shared.contains('-shared')
+	with_static := refusal_message(['-pie', '-static', 'x.o'])
+	assert with_static.contains('-pie') && with_static.contains('-static')
+}
+
 fn test_a_soname_belongs_to_a_shared_object() {
 	assert parse(['-shared', '--soname=libx.so.1', 'x.o'])!.soname == 'libx.so.1'
 	assert parse(['-shared', '-soname', 'libx.so.1', 'x.o'])!.soname == 'libx.so.1'
@@ -181,7 +195,7 @@ fn test_a_line_with_no_input_is_refused() {
 
 fn test_a_flag_this_frontend_does_not_implement_is_refused_by_name() {
 	assert refusal_message(['-r', 'a.o', 'b.o']).contains('relocatable')
-	assert refusal_message(['-pie', 'a.o']).contains('-pie')
+	assert refusal_message(['-static-pie', 'a.o']).contains('-static-pie')
 }
 
 // Each spelling in the refusal table answers with the option as it was written
@@ -255,6 +269,7 @@ fn test_usage_names_the_flags_a_build_writes() {
 	assert text.contains('--entry=')
 	assert text.contains('--library=')
 	assert text.contains('-shared')
+	assert text.contains('-pie')
 	assert text.contains('-static')
 	assert text.contains('--stats')
 	assert text.contains('--version')

@@ -90,6 +90,12 @@ pub mut:
 	// shared is -shared: the file is a shared object another program loads rather
 	// than a program the kernel starts.
 	shared bool
+	// pie is -pie or --pic-executable: the file is a position-independent
+	// executable. The kernel still starts it, and the loader chooses where it is
+	// mapped, so every address inside it is an offset beside a relocation. A
+	// shared object and a pie are different files, and so are a pie and a static
+	// program.
+	pie bool
 	// static_link is -static: every library is resolved into the file, which then
 	// names no loader and no library.
 	static_link bool
@@ -241,6 +247,8 @@ pub fn parse(args []string) !Options {
 			in_group = false
 		} else if arg == '-shared' || arg == '--shared' || arg == '-Bshareable' {
 			opts.shared = true
+		} else if arg == '-pie' || arg == '--pic-executable' {
+			opts.pie = true
 		} else if arg == '-static' || arg == '--static' {
 			opts.static_link = true
 		} else if arg == '-nostdlib' || arg == '--nostdlib' || arg == '-nodefaultlibs'
@@ -248,11 +256,10 @@ pub fn parse(args []string) !Options {
 			opts.no_default_libraries = true
 		} else if arg == '--no-undefined' || arg == '-zdefs' {
 			opts.no_undefined = true
-		} else if arg == '-no-pie' {
-			// The image is placed at a fixed load base, so the flag states what
-			// the link already does. -pie asks for the other shape and is
-			// refused, because no pass here writes a position-independent image.
-			continue
+		} else if arg == '-no-pie' || arg == '--no-pie' {
+			// The other half of -pie: a line that carries both asks for the last
+			// one, the way -z norelro turns off -z relro.
+			opts.pie = false
 		} else if arg == '-s' || arg == '-S' || arg == '--strip-all' || arg == '--strip-debug' {
 			// The image carries no static symbol table and no debug information,
 			// so the strip flags state the write that already happens.
@@ -393,6 +400,12 @@ pub fn parse(args []string) !Options {
 	if opts.shared && opts.static_link {
 		return error('-shared and -static are two different files: one is loaded by another program and one is started by the kernel')
 	}
+	if opts.pie && opts.shared {
+		return error('-pie and -shared are two different files: a pie is started by the kernel and a shared object is loaded by another program')
+	}
+	if opts.pie && opts.static_link {
+		return error('-pie and -static are two different files: a pie is placed by the loader and names one, and a static program is placed by its link and names none')
+	}
 	if opts.soname != '' && !opts.shared {
 		return error('--soname names a shared object, and this line writes a program')
 	}
@@ -470,8 +483,8 @@ const refusals = [
 		reason:    'vvd writes a program or a shared object, and no relocatable file'
 	},
 	Refusal{
-		spellings: ['-pie', '--pic-executable', '--pic']
-		reason:    'the image is placed at a fixed load base, and a position-independent program is not written'
+		spellings: ['-static-pie', '--static-pie']
+		reason:    'a static pie names no loader, and vlk writes a pie that the loader maps'
 	},
 	Refusal{
 		spellings: ['-T', '--script', '--default-script', '--version-script=', '--dynamic-list=']
@@ -622,6 +635,7 @@ pub fn usage() string {
 	lines << '  -l <name>, --library=<name>        Search for a library named <name>'
 	lines << '  -L <dir>, --library-path=<dir>     Add <dir> to the library search path'
 	lines << '  -shared, --shared                  Write a shared object rather than a program'
+	lines << '  -pie, --pic-executable             Write a position-independent executable'
 	lines << '  -static, --static                 Resolve every library into the file'
 	lines << '  -nostdlib, -nodefaultlibs          Name no default library in the image'
 	lines << "  --soname=<name>, -h <name>         Record <name> as the shared object's own"
@@ -648,7 +662,7 @@ pub fn usage() string {
 	lines << 'carry a space. A word after -- is an input, even when it starts with a dash.'
 	lines << ''
 	lines << 'Flags a GNU ld command line carries that this frontend does not implement are'
-	lines << 'refused by name rather than dropped: -r, -pie, -T, -M, --gc-sections,'
+	lines << 'refused by name rather than dropped: -r, -static-pie, -T, -M, --gc-sections,'
 	lines << '--whole-archive, --as-needed, --build-id, --hash-style,'
 	lines << '--threads, --sysroot, -N, -Xlinker and --allow-shlib-undefined.'
 	return lines.join('\n')
