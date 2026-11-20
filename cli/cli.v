@@ -647,7 +647,7 @@ pub fn usage() string {
 	lines << '                                     is what the link already does'
 	lines << '  --dynamic-linker=<path>            Name <path> as the loader instead of the'
 	lines << "                                     target's own"
-	lines << '  -m <emulation>                     The machine: elf_x86_64 only'
+	lines << '  -m <emulation>                     The machine: elf_x86_64 or i386pep'
 	lines << '  -flavor <flavor>                   The driver: gnu only'
 	lines << '  --start-group, --end-group         Search the archives between the markers'
 	lines << '                                     again while a search pulls a member'

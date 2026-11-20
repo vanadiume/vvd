@@ -334,9 +334,9 @@ fn test_an_emulation_for_another_machine_is_refused() {
 }
 
 fn test_a_shared_object_has_no_entry_unless_one_is_named() {
-	assert entry_for(cli.parse(['-shared', 'x.o'])!) == ''
-	assert entry_for(cli.parse(['x.o'])!) == '_start'
-	assert entry_for(cli.parse(['-shared', '-e', 'init', 'x.o'])!) == 'init'
+	assert entry_for(cli.parse(['-shared', 'x.o'])!, target.Format.elf) == ''
+	assert entry_for(cli.parse(['x.o'])!, target.Format.elf) == '_start'
+	assert entry_for(cli.parse(['-shared', '-e', 'init', 'x.o'])!, target.Format.elf) == 'init'
 }
 
 fn test_the_stats_lines_name_what_the_link_took() {
@@ -366,4 +366,76 @@ fn test_the_verbose_lines_keep_the_order_of_the_line() {
 	assert lines.contains('library path: /opt/lib')
 	assert lines.contains('entry: start')
 	assert lines.contains('output: prog')
+}
+
+// A Windows link through the frontend: `-m i386pep` is the emulation, the inputs
+// are COFF objects a compiler wrote, and the image is run the way the tree runs
+// every image it writes. Nothing about the objects is built by hand here, so the
+// test covers the command line, the library's COFF reader, the merge and the PE
+// writer in one pass.
+fn test_a_windows_link_writes_an_image_that_runs() {
+	clang := '/usr/bin/clang'
+	if !os.exists(clang) {
+		eprintln('skipping: no clang on this machine to write COFF objects with')
+		return
+	}
+	if !os.exists('/usr/bin/wine') {
+		eprintln('skipping: no wine on this machine to run a PE image with')
+		return
+	}
+	dir := os.join_path(os.temp_dir(), 'vvd_pe_${os.getpid()}')
+	os.mkdir_all(dir) or { panic(err) }
+	defer {
+		os.rmdir_all(dir) or {}
+	}
+	first := os.join_path(dir, 'add.c')
+	second := os.join_path(dir, 'main.c')
+	os.write_file(first, 'int add(int a, int b) { return a + b; }\n') or { panic(err) }
+	os.write_file(second, 'int add(int a, int b);\nint main(void) { return add(40, 2); }\n') or {
+		panic(err)
+	}
+	first_object := os.join_path(dir, 'add.obj')
+	second_object := os.join_path(dir, 'main.obj')
+	for pair in [[first, first_object], [second, second_object]] {
+		result := os.exec([clang, '--target=x86_64-pc-windows-msvc', '-c', pair[0], '-o', pair[1]])
+		if result.exit_code != 0 {
+			eprintln('skipping: clang could not write a COFF object: ${result.output}')
+			return
+		}
+	}
+	out := os.join_path(dir, 'pe.exe')
+	options := cli.parse(['-m', 'i386pep', '-o', out, first_object, second_object]) or {
+		panic(err.msg())
+	}
+	report := link(options) or { panic('the windows link failed: ${err.msg()}') }
+	assert report.units == 2
+	assert report.bytes > 0
+	os.setenv('WINEDEBUG', '-all', true)
+	result := os.exec(['/usr/bin/wine', out])
+	assert result.exit_code == 42, 'wine left with ${result.exit_code}: ${result.output}'
+}
+
+// A PE image names no loader, so a command line that asks for one is refused
+// before any input is read.
+fn test_a_loader_path_is_refused_for_a_windows_image() {
+	options := cli.parse(['-m', 'i386pep', '--dynamic-linker', '/lib64/ld-linux-x86-64.so.2', '-o',
+		scratch('pe_loader.exe'), 'nothing.obj']) or { panic(err.msg()) }
+	link(options) or {
+		assert err.msg().contains('-dynamic-linker')
+		return
+	}
+	assert false, 'a PE image has no interpreter field'
+}
+
+// The emulation the frontend does not know is still refused by name, so a cross
+// link to a machine vlk does not describe stops at the command line.
+fn test_an_emulation_this_frontend_does_not_know_is_refused() {
+	options := cli.parse(['-m', 'aarch64linux', '-o', scratch('arm.out'), 'nothing.o']) or {
+		panic(err.msg())
+	}
+	link(options) or {
+		assert err.msg().contains('aarch64linux')
+		return
+	}
+	assert false, 'an emulation with no target behind it is refused'
 }
